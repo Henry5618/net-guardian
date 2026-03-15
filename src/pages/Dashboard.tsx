@@ -10,6 +10,10 @@ import LogsPage from "@/pages/LogsPage";
 import AlertsPage from "@/pages/AlertsPage";
 import RulesPage from "@/pages/RulesPage";
 import SettingsPage from "@/pages/SettingsPage";
+import UsersPage from "@/pages/UsersPage";
+import ReportPage from "@/pages/ReportPage";
+import TopologyPage from "@/pages/TopologyPage";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   generatePacket,
   generateTrafficSeries,
@@ -20,6 +24,7 @@ import {
 } from "@/lib/mock-data";
 
 const Dashboard = () => {
+  const { hasPermission } = useAuth();
   const [activeTab, setActiveTab] = useState("dashboard");
   const [packets, setPackets] = useState<PacketLog[]>([]);
   const [traffic, setTraffic] = useState<TrafficPoint[]>(() => generateTrafficSeries(30));
@@ -73,9 +78,15 @@ const Dashboard = () => {
       case "alerts":
         return <AlertsPage />;
       case "rules":
-        return <RulesPage />;
+        return hasPermission("technician") ? <RulesPage /> : <NoAccess />;
       case "settings":
-        return <SettingsPage />;
+        return hasPermission("technician") ? <SettingsPage /> : <NoAccess />;
+      case "users":
+        return hasPermission("admin") ? <UsersPage /> : <NoAccess />;
+      case "report":
+        return <ReportPage />;
+      case "topology":
+        return <TopologyPage />;
       default:
         return (
           <>
@@ -105,7 +116,6 @@ const Dashboard = () => {
               />
             </div>
 
-            {/* Device discovery */}
             <div className="mb-6">
               <DeviceList />
             </div>
@@ -132,5 +142,15 @@ const Dashboard = () => {
     </div>
   );
 };
+
+function NoAccess() {
+  return (
+    <div className="flex flex-col items-center justify-center py-20 text-center">
+      <ShieldCheck className="h-16 w-16 text-muted-foreground/30 mb-4" />
+      <h3 className="text-sm font-semibold text-foreground mb-1">Acesso Restrito</h3>
+      <p className="text-xs text-muted-foreground">Você não tem permissão para acessar esta seção.</p>
+    </div>
+  );
+}
 
 export default Dashboard;

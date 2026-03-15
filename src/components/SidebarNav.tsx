@@ -1,20 +1,28 @@
-import { Shield, LayoutDashboard, ScrollText, Settings, Bell, Activity } from "lucide-react";
+import { Shield, LayoutDashboard, ScrollText, Settings, Bell, Activity, Users, FileText, Map, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface SidebarNavProps {
   activeTab: string;
   onTabChange: (tab: string) => void;
 }
 
-const navItems = [
-  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { id: "logs", label: "Logs", icon: ScrollText },
-  { id: "alerts", label: "Alertas", icon: Bell },
-  { id: "rules", label: "Regras", icon: Activity },
-  { id: "settings", label: "Configurações", icon: Settings },
-];
-
 export function SidebarNav({ activeTab, onTabChange }: SidebarNavProps) {
+  const { profile, signOut, hasPermission } = useAuth();
+
+  const navItems = [
+    { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, minRole: "viewer" as const },
+    { id: "topology", label: "Topologia", icon: Map, minRole: "viewer" as const },
+    { id: "logs", label: "Logs", icon: ScrollText, minRole: "viewer" as const },
+    { id: "alerts", label: "Alertas", icon: Bell, minRole: "viewer" as const },
+    { id: "rules", label: "Regras", icon: Activity, minRole: "technician" as const },
+    { id: "report", label: "Relatório", icon: FileText, minRole: "viewer" as const },
+    { id: "settings", label: "Configurações", icon: Settings, minRole: "technician" as const },
+    { id: "users", label: "Usuários", icon: Users, minRole: "admin" as const },
+  ];
+
+  const roleLabels = { admin: "Administrador", technician: "Técnico", viewer: "Visitante" };
+
   return (
     <aside className="fixed left-0 top-0 z-30 flex h-screen w-[240px] flex-col border-r border-border bg-sidebar">
       {/* Logo */}
@@ -30,7 +38,7 @@ export function SidebarNav({ activeTab, onTabChange }: SidebarNavProps) {
 
       {/* Navigation */}
       <nav className="flex-1 space-y-1 px-3 py-4">
-        {navItems.map((item) => {
+        {navItems.filter((item) => hasPermission(item.minRole)).map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
           return (
@@ -51,14 +59,25 @@ export function SidebarNav({ activeTab, onTabChange }: SidebarNavProps) {
         })}
       </nav>
 
-      {/* Status */}
-      <div className="border-t border-border p-4">
-        <div className="flex items-center gap-2">
-          <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-75" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
-          </span>
-          <span className="text-xs text-muted-foreground">Monitorando eth0</span>
+      {/* User info & logout */}
+      <div className="border-t border-border p-4 space-y-3">
+        {profile && (
+          <div>
+            <p className="text-xs font-medium text-foreground truncate">{profile.full_name}</p>
+            <p className="text-[10px] text-muted-foreground">{roleLabels[profile.role]}</p>
+          </div>
+        )}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
+            </span>
+            <span className="text-xs text-muted-foreground">Monitorando</span>
+          </div>
+          <button onClick={signOut} className="rounded p-1 hover:bg-sidebar-accent transition-colors" title="Sair">
+            <LogOut className="h-3.5 w-3.5 text-muted-foreground" />
+          </button>
         </div>
       </div>
     </aside>
