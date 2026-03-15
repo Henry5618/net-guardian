@@ -3,14 +3,15 @@ import type { TrafficPoint } from "@/lib/mock-data";
 
 interface TrafficChartProps {
   data: TrafficPoint[];
+  title?: string;
 }
 
-export function TrafficChart({ data }: TrafficChartProps) {
+export function TrafficChart({ data, title }: TrafficChartProps) {
   return (
     <div className="card-shadow rounded-lg border border-border bg-card p-4">
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-medium text-foreground">Tráfego em Tempo Real</h3>
+          <h3 className="text-sm font-medium text-foreground">{title || "Tráfego em Tempo Real"}</h3>
           <p className="text-xs text-muted-foreground">Pacotes por segundo (pps)</p>
         </div>
         <div className="flex items-center gap-4 text-xs text-muted-foreground">
