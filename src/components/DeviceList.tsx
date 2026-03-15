@@ -92,6 +92,30 @@ export function DeviceList() {
 
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+      {/* IP Change Alerts */}
+      {ipChanges.length > 0 && (
+        <div className="lg:col-span-3 rounded-lg border border-warning/30 bg-warning/5 p-4 card-shadow">
+          <div className="flex items-center gap-2 mb-3">
+            <AlertTriangle className="h-4 w-4 text-warning" />
+            <h4 className="text-xs font-semibold text-warning">Alterações de IP Detectadas</h4>
+          </div>
+          <div className="space-y-1 max-h-[120px] overflow-y-auto scrollbar-thin">
+            {ipChanges.map((change, i) => (
+              <div key={`${change.mac}-${i}`} className="flex items-center gap-3 text-[10px] py-1 border-b border-border last:border-0">
+                <span className="font-mono text-muted-foreground w-16">{change.timestamp}</span>
+                <span className="text-foreground font-medium">{change.hostname}</span>
+                <span className="text-muted-foreground">({change.mac})</span>
+                <span className="font-mono text-destructive">{change.oldIp}</span>
+                <span className="text-muted-foreground">→</span>
+                <span className={cn("font-mono", change.newIp === "OFFLINE" ? "text-destructive font-semibold" : "text-success")}>
+                  {change.newIp}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Device list */}
       <div className="lg:col-span-1 rounded-lg border border-border bg-card p-4 card-shadow">
         <div className="mb-4 flex items-center justify-between">
