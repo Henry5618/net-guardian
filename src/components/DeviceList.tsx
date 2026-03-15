@@ -1,17 +1,60 @@
-import { useState, useEffect } from "react";
-import { Monitor, Wifi, WifiOff, HardDrive, ChevronRight } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { Monitor, Wifi, WifiOff, HardDrive, ChevronRight, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getNetworkDevices, generateDeviceTraffic, type NetworkDevice, type TrafficPoint } from "@/lib/mock-data";
 import { TrafficChart } from "./TrafficChart";
+
+interface IpChangeEvent {
+  mac: string;
+  hostname: string;
+  oldIp: string;
+  newIp: string;
+  timestamp: string;
+}
 
 export function DeviceList() {
   const [devices, setDevices] = useState<NetworkDevice[]>([]);
   const [selectedIp, setSelectedIp] = useState<string | null>(null);
   const [deviceTraffic, setDeviceTraffic] = useState<TrafficPoint[]>([]);
+  const [ipChanges, setIpChanges] = useState<IpChangeEvent[]>([]);
+  const prevDevicesRef = useRef<NetworkDevice[]>([]);
 
   useEffect(() => {
-    setDevices(getNetworkDevices());
-    const interval = setInterval(() => setDevices(getNetworkDevices()), 5000);
+    const initial = getNetworkDevices();
+    setDevices(initial);
+    prevDevicesRef.current = initial;
+
+    const interval = setInterval(() => {
+      const newDevices = getNetworkDevices();
+      const prev = prevDevicesRef.current;
+
+      // Detect IP changes by MAC address
+      for (const nd of newDevices) {
+        const old = prev.find((d) => d.mac === nd.mac);
+        if (old && old.ip !== nd.ip) {
+          setIpChanges((c) => [{
+            mac: nd.mac,
+            hostname: nd.hostname,
+            oldIp: old.ip,
+            newIp: nd.ip,
+            timestamp: new Date().toLocaleTimeString("pt-BR", { hour12: false }),
+          }, ...c].slice(0, 20));
+        }
+        // Detect device going offline
+        if (old && old.status === "online" && nd.status === "offline") {
+          setIpChanges((c) => [{
+            mac: nd.mac,
+            hostname: nd.hostname,
+            oldIp: nd.ip,
+            newIp: "OFFLINE",
+            timestamp: new Date().toLocaleTimeString("pt-BR", { hour12: false }),
+          }, ...c].slice(0, 20));
+        }
+      }
+
+      prevDevicesRef.current = newDevices;
+      setDevices(newDevices);
+    }, 5000);
     return () => clearInterval(interval);
   }, []);
 
