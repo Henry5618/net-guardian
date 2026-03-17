@@ -33,7 +33,7 @@ except ImportError:
 # ============================================================
 SUPABASE_URL = "https://ajcqektoddeipjnhbpho.supabase.co"
 FUNCTION_URL = f"{SUPABASE_URL}/functions/v1/ingest-network-data"
-AGENT_API_KEY = "SUA_CHAVE_API_AQUI"  # Configure no Supabase Secrets
+AGENT_API_KEY = "*He8165y*"  # Configure no Supabase Secrets
 INTERFACE = "eth0"  # Interface de rede (ex: eth0, wlan0, enp3s0)
 NETWORK_RANGE = "192.168.1.0/24"  # Faixa de IPs para scan ARP
 SCAN_INTERVAL = 60  # Segundos entre scans ARP
