@@ -44,6 +44,42 @@ export type Database = {
         }
         Relationships: []
       }
+      network_alerts: {
+        Row: {
+          created_at: string
+          description: string | null
+          dest_ip: string | null
+          id: string
+          protocol: string | null
+          resolved: boolean
+          severity: string
+          source_ip: string | null
+          title: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          dest_ip?: string | null
+          id?: string
+          protocol?: string | null
+          resolved?: boolean
+          severity?: string
+          source_ip?: string | null
+          title: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          dest_ip?: string | null
+          id?: string
+          protocol?: string | null
+          resolved?: boolean
+          severity?: string
+          source_ip?: string | null
+          title?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string
@@ -89,6 +125,39 @@ export type Database = {
           id?: string
           title?: string
           user_id?: string | null
+        }
+        Relationships: []
+      }
+      traffic_data: {
+        Row: {
+          anomaly: boolean
+          bytes: number
+          dest_ip: string | null
+          id: string
+          packets: number
+          protocol: string | null
+          recorded_at: string
+          source_ip: string | null
+        }
+        Insert: {
+          anomaly?: boolean
+          bytes?: number
+          dest_ip?: string | null
+          id?: string
+          packets?: number
+          protocol?: string | null
+          recorded_at?: string
+          source_ip?: string | null
+        }
+        Update: {
+          anomaly?: boolean
+          bytes?: number
+          dest_ip?: string | null
+          id?: string
+          packets?: number
+          protocol?: string | null
+          recorded_at?: string
+          source_ip?: string | null
         }
         Relationships: []
       }

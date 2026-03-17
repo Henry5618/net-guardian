@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.seed-admin]
 verify_jwt = false
+
+[functions.ingest-network-data]
+verify_jwt = false
