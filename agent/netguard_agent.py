@@ -13,9 +13,7 @@ Configuração:
 """
 
 import time
-import json
 import threading
-from datetime import datetime
 from collections import defaultdict
 
 import requests
@@ -34,22 +32,46 @@ except ImportError:
 SUPABASE_URL = "https://ajcqektoddeipjnhbpho.supabase.co"
 FUNCTION_URL = f"{SUPABASE_URL}/functions/v1/ingest-network-data"
 AGENT_API_KEY = "*He8165y*"  # Configure no Supabase Secrets
-INTERFACE = "eth0"  # Interface de rede (ex: eth0, wlan0, enp3s0)
+INTERFACE = "eth0"  # Interface de rede (ex: eth0, wlan0, Wi-Fi)
 NETWORK_RANGE = "192.168.1.0/24"  # Faixa de IPs para scan ARP
 SCAN_INTERVAL = 60  # Segundos entre scans ARP
 TRAFFIC_INTERVAL = 5  # Segundos entre envios de tráfego
 PACKET_CAPTURE_COUNT = 100  # Pacotes por ciclo de captura
+
+# IPs que NÃO devem gerar alertas (ex: a própria máquina do agente)
+# Adicione aqui o IP da máquina onde o agente roda
+WHITELIST_IPS = [
+    # "192.168.0.108",  # <-- Descomente e coloque o IP da sua máquina
+]
+
+# Destinos que NÃO devem gerar alertas (ex: servidores Supabase)
+WHITELIST_DESTINATIONS = [
+    "ajcqektoddeipjnhbpho.supabase.co",
+    "supabase.co",
+]
 # ============================================================
 
 # Estado global
-known_devices = {}  # mac -> {ip, hostname, last_seen}
+known_devices = {}
 traffic_buffer = defaultdict(lambda: {"packets": 0, "bytes": 0})
 alerts_buffer = []
+syn_tracker = defaultdict(set)  # IP -> set de portas (para detectar scan real)
 lock = threading.Lock()
 
+SYN_SCAN_THRESHOLD = 10  # Mínimo de portas diferentes para considerar port scan
 
-def send_data(data_type: str, data: list):
-    """Envia dados para a Edge Function do Supabase."""
+
+def is_whitelisted(src_ip, dst_ip=None):
+    """Verifica se o tráfego deve ser ignorado para alertas."""
+    if src_ip in WHITELIST_IPS:
+        return True
+    if dst_ip and dst_ip in WHITELIST_IPS:
+        return True
+    return False
+
+
+def send_data(data_type, data):
+    """Envia dados para a Edge Function."""
     if not data:
         return
     try:
@@ -96,13 +118,10 @@ def arp_scan():
             if mac in known_devices:
                 old_ip = known_devices[mac]["ip"]
                 if old_ip != ip:
-                    # IP mudou!
                     print(f"[ALERTA] Dispositivo {mac} mudou IP: {old_ip} -> {ip}")
                     device_events.append({
-                        "mac": mac,
-                        "ip": ip,
-                        "previous_ip": old_ip,
-                        "event_type": "ip_changed",
+                        "mac": mac, "ip": ip,
+                        "previous_ip": old_ip, "event_type": "ip_changed",
                     })
                     alerts_buffer.append({
                         "severity": "high",
@@ -112,20 +131,15 @@ def arp_scan():
                     })
                 else:
                     device_events.append({
-                        "mac": mac,
-                        "ip": ip,
-                        "event_type": "seen",
+                        "mac": mac, "ip": ip, "event_type": "seen",
                     })
                 known_devices[mac]["ip"] = ip
                 known_devices[mac]["last_seen"] = time.time()
             else:
-                # Novo dispositivo
                 print(f"[NOVO] Dispositivo descoberto: {mac} ({ip})")
                 known_devices[mac] = {"ip": ip, "last_seen": time.time()}
                 device_events.append({
-                    "mac": mac,
-                    "ip": ip,
-                    "event_type": "new",
+                    "mac": mac, "ip": ip, "event_type": "new",
                 })
 
     # Verificar dispositivos offline
@@ -134,15 +148,7 @@ def arp_scan():
             if mac not in current_macs and time.time() - info["last_seen"] > SCAN_INTERVAL * 3:
                 print(f"[OFFLINE] Dispositivo {mac} ({info['ip']}) está offline")
                 device_events.append({
-                    "mac": mac,
-                    "ip": info["ip"],
-                    "event_type": "offline",
-                })
-                alerts_buffer.append({
-                    "severity": "medium",
-                    "title": f"Dispositivo offline: {mac}",
-                    "description": f"Dispositivo {mac} ({info['ip']}) não responde",
-                    "source_ip": info["ip"],
+                    "mac": mac, "ip": info["ip"], "event_type": "offline",
                 })
 
     send_data("devices", device_events)
@@ -160,18 +166,23 @@ def packet_callback(pkt):
     proto = "other"
     if pkt.haslayer(TCP):
         proto = "TCP"
-        # Detectar port scan (muitas portas diferentes)
         dst_port = pkt[TCP].dport
-        if pkt[TCP].flags == "S":  # SYN sem ACK = possível scan
+
+        # Rastrear SYN para detectar port scan REAL (não conexões normais)
+        if pkt[TCP].flags == "S" and not is_whitelisted(src_ip, dst_ip):
             with lock:
-                alerts_buffer.append({
-                    "severity": "high",
-                    "title": f"Possível port scan detectado",
-                    "description": f"SYN de {src_ip} para {dst_ip}:{dst_port}",
-                    "source_ip": src_ip,
-                    "dest_ip": dst_ip,
-                    "protocol": "TCP",
-                })
+                syn_tracker[src_ip].add(dst_port)
+                # Só alerta se mais de N portas diferentes forem sondadas
+                if len(syn_tracker[src_ip]) == SYN_SCAN_THRESHOLD:
+                    ports = sorted(list(syn_tracker[src_ip]))[:10]
+                    alerts_buffer.append({
+                        "severity": "high",
+                        "title": f"Port scan detectado: {src_ip}",
+                        "description": f"SYN para {len(syn_tracker[src_ip])} portas: {ports}",
+                        "source_ip": src_ip,
+                        "dest_ip": dst_ip,
+                        "protocol": "TCP",
+                    })
     elif pkt.haslayer(UDP):
         proto = "UDP"
     elif pkt.haslayer(ICMP):
@@ -185,8 +196,8 @@ def packet_callback(pkt):
         traffic_buffer[key]["dest_ip"] = dst_ip
         traffic_buffer[key]["protocol"] = proto
 
-    # Detectar pacotes grandes (possível exfiltração)
-    if size > 10000:
+    # Detectar pacotes grandes (possível exfiltração) - ignorar whitelisted
+    if size > 10000 and not is_whitelisted(src_ip, dst_ip):
         with lock:
             alerts_buffer.append({
                 "severity": "medium",
@@ -216,7 +227,7 @@ def capture_packets():
 
 
 def flush_traffic():
-    """Envia dados de tráfego acumulados periodicamente."""
+    """Envia dados de tráfego acumulados e limpa o rastreador de SYN."""
     while True:
         time.sleep(TRAFFIC_INTERVAL)
         with lock:
@@ -229,6 +240,9 @@ def flush_traffic():
                 data = list(alerts_buffer)
                 alerts_buffer.clear()
                 send_data("alerts", data)
+
+            # Limpar rastreador de SYN a cada ciclo para não acumular infinitamente
+            syn_tracker.clear()
 
 
 def scan_loop():
@@ -245,16 +259,13 @@ def main():
     print(f"  Interface: {INTERFACE}")
     print(f"  Rede: {NETWORK_RANGE}")
     print(f"  Servidor: {SUPABASE_URL}")
+    print(f"  Whitelist IPs: {WHITELIST_IPS or '(nenhum)'}")
     print("=" * 60)
 
     if AGENT_API_KEY == "SUA_CHAVE_API_AQUI":
         print("\n[AVISO] Configure AGENT_API_KEY antes de executar!")
-        print("  1. Acesse as configurações do projeto no Lovable")
-        print("  2. Adicione o secret AGENT_API_KEY")
-        print("  3. Copie a chave e cole neste script\n")
         return
 
-    # Threads paralelas
     threads = [
         threading.Thread(target=scan_loop, daemon=True, name="ARP-Scanner"),
         threading.Thread(target=capture_packets, daemon=True, name="Packet-Capture"),
