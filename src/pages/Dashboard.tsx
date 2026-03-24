@@ -50,6 +50,7 @@ const Dashboard = () => {
     message: a.title + (a.description ? ` — ${a.description}` : ""),
     timestamp: a.createdAt,
     pps: 0,
+    sourceIp: a.sourceIp || "0.0.0.0",
   }));
 
   const renderContent = () => {
