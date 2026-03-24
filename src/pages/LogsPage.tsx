@@ -1,7 +1,9 @@
-import { useState, useEffect } from "react";
-import { ScrollText, ShieldAlert, Bug, RefreshCw, LogIn, Filter } from "lucide-react";
+import { useState } from "react";
+import { ScrollText, ShieldAlert, Bug, RefreshCw, LogIn, Filter, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { generateLogs, type LogEntry } from "@/lib/mock-data";
+import { useAlerts } from "@/hooks/use-realtime-data";
+
+type LogCategory = "threat" | "error" | "update" | "login" | "all";
 
 const categoryConfig = {
   threat: { label: "Ameaças", icon: ShieldAlert, color: "text-destructive" },
@@ -12,31 +14,63 @@ const categoryConfig = {
 
 const severityStyles: Record<string, string> = {
   info: "bg-primary/10 text-primary",
+  low: "bg-primary/10 text-primary",
   warning: "bg-warning/10 text-warning",
+  medium: "bg-warning/10 text-warning",
   error: "bg-destructive/10 text-destructive",
+  high: "bg-destructive/10 text-destructive",
   critical: "bg-destructive/20 text-destructive font-semibold",
 };
 
-export default function LogsPage() {
-  const [logs, setLogs] = useState<LogEntry[]>(() => generateLogs(40));
-  const [filter, setFilter] = useState<LogEntry["category"] | "all">("all");
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+function mapAlertToCategory(severity: string): "threat" | "error" {
+  if (severity === "critical" || severity === "high") return "threat";
+  return "error";
+}
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const newLogs = generateLogs(2);
-      setLogs((prev) => [...newLogs, ...prev].slice(0, 200));
-    }, 8000);
-    return () => clearInterval(interval);
-  }, []);
+export default function LogsPage() {
+  const { alerts, loading } = useAlerts();
+  const [filter, setFilter] = useState<LogCategory>("all");
+
+  // Map real alerts into log entries
+  const logs = alerts.map((a) => ({
+    id: a.id,
+    timestamp: a.createdAt,
+    category: mapAlertToCategory(a.severity),
+    severity: a.severity,
+    source: a.protocol ? `${a.protocol}` : "Agente",
+    message: a.title,
+    details: [
+      a.description,
+      a.sourceIp ? `Origem: ${a.sourceIp}` : null,
+      a.destIp ? `Destino: ${a.destIp}` : null,
+    ]
+      .filter(Boolean)
+      .join(" | "),
+  }));
+
+  const counts: Record<string, number> = {
+    all: logs.length,
+    threat: logs.filter((l) => l.category === "threat").length,
+    error: logs.filter((l) => l.category === "error").length,
+    update: 0,
+    login: 0,
+  };
 
   const filtered = filter === "all" ? logs : logs.filter((l) => l.category === filter);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center p-12">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   return (
     <div>
       <div className="mb-6">
         <h2 className="text-lg font-semibold text-foreground">Logs do Sistema</h2>
-        <p className="text-xs text-muted-foreground">Ameaças, erros, atualizações e atividade de login</p>
+        <p className="text-xs text-muted-foreground">Eventos reais capturados pelo agente de rede</p>
       </div>
 
       {/* Filter tabs */}
@@ -54,9 +88,7 @@ export default function LogsPage() {
             )}
           >
             {cat === "all" ? "Todos" : categoryConfig[cat].label}
-            <span className="ml-1.5 opacity-70">
-              ({cat === "all" ? logs.length : logs.filter((l) => l.category === cat).length})
-            </span>
+            <span className="ml-1.5 opacity-70">({counts[cat]})</span>
           </button>
         ))}
       </div>
@@ -65,40 +97,37 @@ export default function LogsPage() {
       <div className="rounded-lg border border-border bg-card card-shadow overflow-hidden">
         <div className="max-h-[650px] overflow-y-auto scrollbar-thin">
           {filtered.length === 0 ? (
-            <div className="flex items-center justify-center p-12">
+            <div className="flex flex-col items-center justify-center p-12">
               <p className="text-sm text-muted-foreground">Nenhum log encontrado</p>
+              <p className="text-[10px] text-muted-foreground mt-1">Execute o agente para capturar eventos da rede</p>
             </div>
           ) : (
             filtered.map((log) => {
               const catConf = categoryConfig[log.category];
-              const Icon = catConf.icon;
-              const isExpanded = expandedId === log.id;
+              const Icon = catConf?.icon || ScrollText;
+              const color = catConf?.color || "text-muted-foreground";
               return (
-                <button
+                <div
                   key={log.id}
-                  onClick={() => setExpandedId(isExpanded ? null : log.id)}
-                  className={cn(
-                    "flex w-full flex-col border-b border-border px-4 py-3 text-left transition-colors hover:bg-accent/30",
-                    isExpanded && "bg-accent/20"
-                  )}
+                  className="flex w-full flex-col border-b border-border px-4 py-3 text-left transition-colors hover:bg-accent/30"
                 >
                   <div className="flex items-center gap-3">
-                    <Icon className={cn("h-4 w-4 flex-shrink-0", catConf.color)} />
+                    <Icon className={cn("h-4 w-4 flex-shrink-0", color)} />
                     <span className="text-[10px] font-mono text-muted-foreground w-16 flex-shrink-0">
                       {log.timestamp}
                     </span>
-                    <span className={cn("rounded px-1.5 py-0.5 text-[9px] uppercase", severityStyles[log.severity])}>
+                    <span className={cn("rounded px-1.5 py-0.5 text-[9px] uppercase", severityStyles[log.severity] || severityStyles.medium)}>
                       {log.severity}
                     </span>
                     <span className="text-[10px] text-muted-foreground flex-shrink-0">{log.source}</span>
                     <span className="flex-1 truncate text-xs text-foreground">{log.message}</span>
                   </div>
-                  {isExpanded && log.details && (
+                  {log.details && (
                     <div className="mt-2 ml-7 rounded bg-secondary/50 p-3">
                       <p className="text-[11px] text-secondary-foreground font-mono leading-relaxed">{log.details}</p>
                     </div>
                   )}
-                </button>
+                </div>
               );
             })
           )}
