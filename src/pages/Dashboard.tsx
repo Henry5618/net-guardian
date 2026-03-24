@@ -45,7 +45,7 @@ const Dashboard = () => {
   // Convert alerts for AlertsPanel (mock format compatibility)
   const panelAlerts = rawAlerts.slice(0, 50).map((a) => ({
     id: a.id,
-    type: "volume_spike" as const,
+    type: "unusual_traffic" as const,
     severity: (a.severity === "critical" ? "critical" : a.severity === "high" ? "high" : a.severity === "low" ? "low" : "medium") as "critical" | "high" | "medium" | "low",
     message: a.title + (a.description ? ` — ${a.description}` : ""),
     timestamp: a.createdAt,
