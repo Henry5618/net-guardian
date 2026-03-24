@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Activity, AlertTriangle, Network, ShieldCheck } from "lucide-react";
 import { SidebarNav } from "@/components/SidebarNav";
 import { MetricCard } from "@/components/MetricCard";
@@ -14,62 +14,44 @@ import UsersPage from "@/pages/UsersPage";
 import ReportPage from "@/pages/ReportPage";
 import TopologyPage from "@/pages/TopologyPage";
 import { useAuth } from "@/contexts/AuthContext";
-import {
-  generatePacket,
-  generateTrafficSeries,
-  generateAlert,
-  type PacketLog,
-  type TrafficPoint,
-  type AnomalyAlert,
-} from "@/lib/mock-data";
+import { useDevices, useTrafficData, useAlerts } from "@/hooks/use-realtime-data";
+import type { TrafficPoint } from "@/lib/mock-data";
 
 const Dashboard = () => {
   const { hasPermission } = useAuth();
   const [activeTab, setActiveTab] = useState("dashboard");
-  const [packets, setPackets] = useState<PacketLog[]>([]);
-  const [traffic, setTraffic] = useState<TrafficPoint[]>(() => generateTrafficSeries(30));
-  const [alerts, setAlerts] = useState<AnomalyAlert[]>([]);
-  const [totalPackets, setTotalPackets] = useState(0);
-  const [currentPps, setCurrentPps] = useState(0);
 
-  useEffect(() => {
-    const packetInterval = setInterval(() => {
-      const batch = Array.from({ length: 3 }, () => generatePacket());
-      setPackets((prev) => [...batch, ...prev].slice(0, 200));
-      setTotalPackets((prev) => prev + batch.length);
-    }, 800);
+  const { devices } = useDevices();
+  const { traffic: rawTraffic } = useTrafficData();
+  const { alerts: rawAlerts } = useAlerts();
 
-    const trafficInterval = setInterval(() => {
-      setTraffic((prev) => {
-        const last = prev[prev.length - 1];
-        const base = last ? last.packets : 250;
-        const spike = Math.random() < 0.06 ? Math.random() * 800 : 0;
-        const packets = Math.floor(base + (Math.random() - 0.5) * 60 + spike);
-        const anomaly = spike > 400;
-        const now = new Date();
-        const point: TrafficPoint = {
-          time: now.toLocaleTimeString("pt-BR", { hour12: false, minute: "2-digit", second: "2-digit" }),
-          packets: Math.max(0, packets),
-          bytes: packets * (200 + Math.floor(Math.random() * 600)),
-          anomaly,
-        };
-        setCurrentPps(point.packets);
-        if (anomaly) {
-          setAlerts((prev) => [generateAlert(), ...prev].slice(0, 50));
-        }
-        return [...prev.slice(1), point];
-      });
-    }, 2000);
+  // Convert to chart format
+  const traffic: TrafficPoint[] = rawTraffic.map((t) => ({
+    time: t.time,
+    packets: t.packets,
+    bytes: t.bytes,
+    anomaly: t.anomaly,
+  }));
 
-    return () => {
-      clearInterval(packetInterval);
-      clearInterval(trafficInterval);
-    };
-  }, []);
-
-  const hasActiveThreats = alerts.some(
-    (a) => a.severity === "critical" || a.severity === "high"
+  const currentPps = traffic.length > 0 ? traffic[traffic.length - 1].packets : 0;
+  const totalPackets = rawTraffic.reduce((sum, t) => sum + t.packets, 0);
+  const hasActiveThreats = rawAlerts.some(
+    (a) => (a.severity === "critical" || a.severity === "high") && !a.resolved
   );
+  const activeThreatsCount = rawAlerts.filter(
+    (a) => (a.severity === "critical" || a.severity === "high") && !a.resolved
+  ).length;
+
+  // Convert alerts for AlertsPanel (mock format compatibility)
+  const panelAlerts = rawAlerts.slice(0, 50).map((a) => ({
+    id: a.id,
+    type: "unusual_traffic" as const,
+    severity: (a.severity === "critical" ? "critical" : a.severity === "high" ? "high" : a.severity === "low" ? "low" : "medium") as "critical" | "high" | "medium" | "low",
+    message: a.title + (a.description ? ` — ${a.description}` : ""),
+    timestamp: a.createdAt,
+    pps: 0,
+    sourceIp: a.sourceIp || "0.0.0.0",
+  }));
 
   const renderContent = () => {
     switch (activeTab) {
@@ -93,16 +75,16 @@ const Dashboard = () => {
             <div className="mb-6">
               <h2 className="text-lg font-semibold text-foreground">Dashboard</h2>
               <p className="text-xs text-muted-foreground">
-                Monitoramento de rede em tempo real — Interface eth0
+                Monitoramento de rede em tempo real — Dados do agente local
               </p>
             </div>
 
             <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <MetricCard title="Pacotes/s" value={currentPps} subtitle="Taxa atual" icon={Activity} variant="default" />
-              <MetricCard title="Total Capturado" value={totalPackets.toLocaleString()} subtitle="Desde o início" icon={Network} />
+              <MetricCard title="Pacotes/s" value={currentPps} subtitle="Último registro" icon={Activity} variant="default" />
+              <MetricCard title="Dispositivos" value={devices.length} subtitle={`${devices.filter(d => d.status === "online").length} online`} icon={Network} />
               <MetricCard
                 title="Ameaças Ativas"
-                value={alerts.filter((a) => a.severity === "critical" || a.severity === "high").length}
+                value={activeThreatsCount}
                 subtitle={hasActiveThreats ? "Atenção necessária" : "Nenhuma ameaça"}
                 icon={AlertTriangle}
                 variant={hasActiveThreats ? "destructive" : "success"}
@@ -125,8 +107,41 @@ const Dashboard = () => {
             </div>
 
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-              <PacketTable packets={packets} />
-              <AlertsPanel alerts={alerts} />
+              <div className="rounded-lg border border-border bg-card p-4 card-shadow">
+                <h3 className="text-sm font-medium text-foreground mb-2">Tráfego Recente</h3>
+                <p className="text-xs text-muted-foreground mb-3">{rawTraffic.length} registros</p>
+                <div className="max-h-[340px] overflow-y-auto scrollbar-thin">
+                  <table className="w-full text-xs">
+                    <thead className="sticky top-0 bg-card">
+                      <tr className="border-b border-border text-left text-muted-foreground">
+                        <th className="px-3 py-2 font-medium">Hora</th>
+                        <th className="px-3 py-2 font-medium">Origem</th>
+                        <th className="px-3 py-2 font-medium">Destino</th>
+                        <th className="px-3 py-2 font-medium">Proto</th>
+                        <th className="px-3 py-2 font-medium text-right">Pkts</th>
+                        <th className="px-3 py-2 font-medium text-right">Bytes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rawTraffic.slice(-50).reverse().map((t, i) => (
+                        <tr key={i} className="border-b border-border/50 hover:bg-accent/50">
+                          <td className="px-3 py-2 font-mono text-muted-foreground">{t.time}</td>
+                          <td className="px-3 py-2 font-mono text-foreground">{t.sourceIp || "—"}</td>
+                          <td className="px-3 py-2 font-mono text-foreground">{t.destIp || "—"}</td>
+                          <td className="px-3 py-2">
+                            <span className="rounded bg-secondary px-1.5 py-0.5 font-mono text-secondary-foreground">
+                              {t.protocol || "—"}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-muted-foreground">{t.packets}</td>
+                          <td className="px-3 py-2 text-right font-mono text-muted-foreground">{t.bytes}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <AlertsPanel alerts={panelAlerts} />
             </div>
           </>
         );

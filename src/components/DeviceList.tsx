@@ -1,94 +1,40 @@
-import { useState, useEffect, useRef } from "react";
-import { Monitor, Wifi, WifiOff, HardDrive, ChevronRight, AlertTriangle } from "lucide-react";
+import { useState } from "react";
+import { Monitor, Wifi, WifiOff, HardDrive, ChevronRight, AlertTriangle, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { getNetworkDevices, generateDeviceTraffic, type NetworkDevice, type TrafficPoint } from "@/lib/mock-data";
 import { TrafficChart } from "./TrafficChart";
-
-interface IpChangeEvent {
-  mac: string;
-  hostname: string;
-  oldIp: string;
-  newIp: string;
-  timestamp: string;
-}
+import { useDevices, useTrafficData } from "@/hooks/use-realtime-data";
+import type { TrafficPoint } from "@/lib/mock-data";
 
 export function DeviceList() {
-  const [devices, setDevices] = useState<NetworkDevice[]>([]);
+  const { devices, ipChanges, loading } = useDevices();
   const [selectedIp, setSelectedIp] = useState<string | null>(null);
-  const [deviceTraffic, setDeviceTraffic] = useState<TrafficPoint[]>([]);
-  const [ipChanges, setIpChanges] = useState<IpChangeEvent[]>([]);
-  const prevDevicesRef = useRef<NetworkDevice[]>([]);
-
-  useEffect(() => {
-    const initial = getNetworkDevices();
-    setDevices(initial);
-    prevDevicesRef.current = initial;
-
-    const interval = setInterval(() => {
-      const newDevices = getNetworkDevices();
-      const prev = prevDevicesRef.current;
-
-      // Detect IP changes by MAC address
-      for (const nd of newDevices) {
-        const old = prev.find((d) => d.mac === nd.mac);
-        if (old && old.ip !== nd.ip) {
-          setIpChanges((c) => [{
-            mac: nd.mac,
-            hostname: nd.hostname,
-            oldIp: old.ip,
-            newIp: nd.ip,
-            timestamp: new Date().toLocaleTimeString("pt-BR", { hour12: false }),
-          }, ...c].slice(0, 20));
-        }
-        // Detect device going offline
-        if (old && old.status === "online" && nd.status === "offline") {
-          setIpChanges((c) => [{
-            mac: nd.mac,
-            hostname: nd.hostname,
-            oldIp: nd.ip,
-            newIp: "OFFLINE",
-            timestamp: new Date().toLocaleTimeString("pt-BR", { hour12: false }),
-          }, ...c].slice(0, 20));
-        }
-      }
-
-      prevDevicesRef.current = newDevices;
-      setDevices(newDevices);
-    }, 5000);
-    return () => clearInterval(interval);
-  }, []);
-
-  useEffect(() => {
-    if (!selectedIp) return;
-    setDeviceTraffic(generateDeviceTraffic(30));
-    const interval = setInterval(() => {
-      setDeviceTraffic((prev) => {
-        const now = new Date();
-        const base = prev.length > 0 ? prev[prev.length - 1].packets : 50;
-        const spike = Math.random() < 0.05 ? Math.random() * 300 : 0;
-        const packets = Math.max(0, Math.floor(base + (Math.random() - 0.5) * 30 + spike));
-        return [
-          ...prev.slice(1),
-          {
-            time: now.toLocaleTimeString("pt-BR", { hour12: false, minute: "2-digit", second: "2-digit" }),
-            packets,
-            bytes: packets * (200 + Math.floor(Math.random() * 600)),
-            anomaly: spike > 200,
-          },
-        ];
-      });
-    }, 2000);
-    return () => clearInterval(interval);
-  }, [selectedIp]);
+  const { traffic: deviceTraffic, loading: trafficLoading } = useTrafficData(selectedIp);
 
   const selectedDevice = devices.find((d) => d.ip === selectedIp);
   const onlineCount = devices.filter((d) => d.status === "online").length;
+
+  // Convert to TrafficChart format
+  const chartData: TrafficPoint[] = deviceTraffic.map((t) => ({
+    time: t.time,
+    packets: t.packets,
+    bytes: t.bytes,
+    anomaly: t.anomaly,
+  }));
 
   const formatBytes = (b: number) => {
     if (b > 1000000) return `${(b / 1000000).toFixed(1)} MB`;
     if (b > 1000) return `${(b / 1000).toFixed(1)} KB`;
     return `${b} B`;
   };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center p-12">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        <span className="ml-2 text-sm text-muted-foreground">Carregando dispositivos...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -102,14 +48,12 @@ export function DeviceList() {
           <div className="space-y-1 max-h-[120px] overflow-y-auto scrollbar-thin">
             {ipChanges.map((change, i) => (
               <div key={`${change.mac}-${i}`} className="flex items-center gap-3 text-[10px] py-1 border-b border-border last:border-0">
-                <span className="font-mono text-muted-foreground w-16">{change.timestamp}</span>
-                <span className="text-foreground font-medium">{change.hostname}</span>
+                <span className="font-mono text-muted-foreground w-16">{change.detectedAt}</span>
+                <span className="text-foreground font-medium">{change.hostname || change.mac}</span>
                 <span className="text-muted-foreground">({change.mac})</span>
-                <span className="font-mono text-destructive">{change.oldIp}</span>
+                <span className="font-mono text-destructive">{change.previousIp || "—"}</span>
                 <span className="text-muted-foreground">→</span>
-                <span className={cn("font-mono", change.newIp === "OFFLINE" ? "text-destructive font-semibold" : "text-success")}>
-                  {change.newIp}
-                </span>
+                <span className="font-mono text-success">{change.currentIp}</span>
               </div>
             ))}
           </div>
@@ -124,45 +68,52 @@ export function DeviceList() {
             {onlineCount} online
           </span>
         </div>
-        <div className="space-y-1 max-h-[600px] overflow-y-auto scrollbar-thin">
-          {devices.map((device) => (
-            <button
-              key={device.ip}
-              onClick={() => setSelectedIp(device.ip)}
-              className={cn(
-                "flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left transition-colors",
-                selectedIp === device.ip
-                  ? "bg-primary/10 border border-primary/30"
-                  : "hover:bg-accent border border-transparent"
-              )}
-            >
-              <div className={cn(
-                "flex h-8 w-8 items-center justify-center rounded-md",
-                device.status === "online" ? "bg-success/10" : "bg-muted"
-              )}>
-                {device.status === "online" ? (
-                  <Wifi className="h-4 w-4 text-success" />
-                ) : (
-                  <WifiOff className="h-4 w-4 text-muted-foreground" />
+        {devices.length === 0 ? (
+          <div className="text-center py-8">
+            <HardDrive className="mx-auto h-8 w-8 text-muted-foreground/30 mb-2" />
+            <p className="text-xs text-muted-foreground">Nenhum dispositivo detectado</p>
+            <p className="text-[10px] text-muted-foreground mt-1">Execute o agente para descobrir dispositivos</p>
+          </div>
+        ) : (
+          <div className="space-y-1 max-h-[600px] overflow-y-auto scrollbar-thin">
+            {devices.map((device) => (
+              <button
+                key={device.mac}
+                onClick={() => setSelectedIp(device.ip)}
+                className={cn(
+                  "flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left transition-colors",
+                  selectedIp === device.ip
+                    ? "bg-primary/10 border border-primary/30"
+                    : "hover:bg-accent border border-transparent"
                 )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs font-medium text-foreground truncate">{device.hostname}</p>
-                  <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+              >
+                <div className={cn(
+                  "flex h-8 w-8 items-center justify-center rounded-md",
+                  device.status === "online" ? "bg-success/10" : "bg-muted"
+                )}>
+                  {device.status === "online" ? (
+                    <Wifi className="h-4 w-4 text-success" />
+                  ) : (
+                    <WifiOff className="h-4 w-4 text-muted-foreground" />
+                  )}
                 </div>
-                <p className="text-[10px] font-mono text-muted-foreground">{device.ip}</p>
-              </div>
-            </button>
-          ))}
-        </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-medium text-foreground truncate">{device.hostname || device.mac}</p>
+                    <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                  </div>
+                  <p className="text-[10px] font-mono text-muted-foreground">{device.ip}</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Device detail + traffic */}
       <div className="lg:col-span-2 space-y-4">
         {selectedDevice ? (
           <>
-            {/* Device info card */}
             <div className="rounded-lg border border-border bg-card p-5 card-shadow">
               <div className="flex items-center gap-4 mb-4">
                 <div className={cn(
@@ -172,7 +123,7 @@ export function DeviceList() {
                   <Monitor className="h-6 w-6 text-foreground" />
                 </div>
                 <div>
-                  <h3 className="text-base font-semibold text-foreground">{selectedDevice.hostname}</h3>
+                  <h3 className="text-base font-semibold text-foreground">{selectedDevice.hostname || selectedDevice.mac}</h3>
                   <p className="text-xs font-mono text-muted-foreground">{selectedDevice.ip} • {selectedDevice.mac}</p>
                 </div>
                 <span className={cn(
@@ -185,41 +136,33 @@ export function DeviceList() {
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                <div className="rounded-md bg-accent/50 p-3">
-                  <p className="text-[10px] text-muted-foreground">Fabricante</p>
-                  <p className="text-sm font-medium text-foreground">{selectedDevice.vendor}</p>
-                </div>
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
                 <div className="rounded-md bg-accent/50 p-3">
                   <p className="text-[10px] text-muted-foreground">Último Visto</p>
                   <p className="text-sm font-mono font-medium text-foreground">{selectedDevice.lastSeen}</p>
                 </div>
                 <div className="rounded-md bg-accent/50 p-3">
-                  <p className="text-[10px] text-muted-foreground">Enviado</p>
-                  <p className="text-sm font-medium text-foreground">{formatBytes(selectedDevice.traffic.sent)}</p>
+                  <p className="text-[10px] text-muted-foreground">MAC</p>
+                  <p className="text-sm font-mono font-medium text-foreground">{selectedDevice.mac}</p>
                 </div>
                 <div className="rounded-md bg-accent/50 p-3">
-                  <p className="text-[10px] text-muted-foreground">Recebido</p>
-                  <p className="text-sm font-medium text-foreground">{formatBytes(selectedDevice.traffic.received)}</p>
+                  <p className="text-[10px] text-muted-foreground">Evento</p>
+                  <p className="text-sm font-medium text-foreground">{selectedDevice.eventType}</p>
                 </div>
               </div>
-
-              {selectedDevice.openPorts.length > 0 && (
-                <div className="mt-4">
-                  <p className="text-[10px] text-muted-foreground mb-2">Portas Abertas</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {selectedDevice.openPorts.map((port) => (
-                      <span key={port} className="rounded bg-secondary px-2 py-0.5 text-[10px] font-mono text-secondary-foreground">
-                        {port}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
 
-            {/* Per-device traffic chart */}
-            <TrafficChart data={deviceTraffic} title={`Tráfego — ${selectedDevice.hostname}`} />
+            {trafficLoading ? (
+              <div className="flex items-center justify-center p-8 rounded-lg border border-border bg-card">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : chartData.length > 0 ? (
+              <TrafficChart data={chartData} title={`Tráfego — ${selectedDevice.hostname || selectedDevice.ip}`} />
+            ) : (
+              <div className="flex items-center justify-center p-8 rounded-lg border border-border bg-card card-shadow">
+                <p className="text-xs text-muted-foreground">Sem dados de tráfego para este dispositivo</p>
+              </div>
+            )}
           </>
         ) : (
           <div className="flex h-full items-center justify-center rounded-lg border border-border bg-card p-12 card-shadow">
