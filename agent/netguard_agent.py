@@ -72,11 +72,13 @@ PACKET_CAPTURE_COUNT = 100  # Pacotes por ciclo de captura
 
 WHITELIST_IPS = [
     "192.168.0.108",
+    "192.168.0.123",
 ]
 
 WHITELIST_DESTINATIONS = [
     "ajcqektoddeipjnhbpho.supabase.co",
     "supabase.co",
+    "187.183.41.96",
 ]
 # ============================================================
 
