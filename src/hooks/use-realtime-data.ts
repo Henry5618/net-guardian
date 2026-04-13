@@ -29,6 +29,7 @@ export interface RealAlert {
   destIp: string | null;
   protocol: string | null;
   resolved: boolean;
+  resolution: string | null;
   createdAt: string;
 }
 
@@ -69,7 +70,7 @@ export function useDevices(refreshInterval = 10000) {
         ip: d.ip,
         hostname: d.hostname,
         lastSeen: new Date(d.detected_at).toLocaleTimeString("pt-BR", { hour12: false }),
-        status: age < 120000 ? "online" : "offline", // 2 min threshold
+        status: age < 120000 ? "online" : "offline",
         eventType: d.event_type,
       };
     });
@@ -97,7 +98,6 @@ export function useDevices(refreshInterval = 10000) {
     return () => clearInterval(interval);
   }, [fetchDevices, refreshInterval]);
 
-  // Realtime subscription
   useEffect(() => {
     const channel = supabase
       .channel("device_history_changes")
@@ -111,8 +111,8 @@ export function useDevices(refreshInterval = 10000) {
   return { devices, ipChanges, loading };
 }
 
-// Fetch traffic data, optionally filtered by IP
-export function useTrafficData(sourceIp?: string | null, refreshInterval = 5000) {
+// Fetch traffic data, filtered by device IP (source OR dest)
+export function useTrafficData(deviceIp?: string | null, refreshInterval = 5000) {
   const [traffic, setTraffic] = useState<RealTrafficPoint[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -123,8 +123,8 @@ export function useTrafficData(sourceIp?: string | null, refreshInterval = 5000)
       .order("recorded_at", { ascending: false })
       .limit(100);
 
-    if (sourceIp) {
-      query = query.or(`source_ip.eq.${sourceIp},dest_ip.eq.${sourceIp}`);
+    if (deviceIp) {
+      query = query.or(`source_ip.eq.${deviceIp},dest_ip.eq.${deviceIp}`);
     }
 
     const { data, error } = await query;
@@ -142,17 +142,17 @@ export function useTrafficData(sourceIp?: string | null, refreshInterval = 5000)
           minute: "2-digit",
           second: "2-digit",
         }),
-      packets: d.packets,
-      bytes: d.bytes,
-      anomaly: d.anomaly,
-      sourceIp: d.source_ip,
-      destIp: d.dest_ip,
-      protocol: d.protocol,
+        packets: d.packets,
+        bytes: d.bytes,
+        anomaly: d.anomaly,
+        sourceIp: d.source_ip,
+        destIp: d.dest_ip,
+        protocol: d.protocol,
       };
     });
     setTraffic(points);
     setLoading(false);
-  }, [sourceIp]);
+  }, [deviceIp]);
 
   useEffect(() => {
     fetchTraffic();
@@ -162,13 +162,13 @@ export function useTrafficData(sourceIp?: string | null, refreshInterval = 5000)
 
   useEffect(() => {
     const channel = supabase
-      .channel("traffic_data_changes")
+      .channel(`traffic_data_changes_${deviceIp || "all"}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "traffic_data" }, () => {
         fetchTraffic();
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [fetchTraffic]);
+  }, [fetchTraffic, deviceIp]);
 
   return { traffic, loading };
 }
@@ -179,10 +179,9 @@ export function useAlerts(refreshInterval = 10000) {
   const [loading, setLoading] = useState(true);
 
   const clearAlerts = async () => {
-    // Delete all alerts by matching something essentially true
     const { error } = await supabase.from("network_alerts").delete().neq("id", "00000000-0000-0000-0000-000000000000");
     if (error) {
-      alert(`Não foi possível limpar os alertas globais: ${error.message}\nSua tabela "network_alerts" no Supabase provavelmente está com o modo RLS ativado bloqueando deletes.`);
+      alert(`Não foi possível limpar os alertas: ${error.message}`);
     } else {
       await fetchAlerts();
     }
@@ -198,7 +197,7 @@ export function useAlerts(refreshInterval = 10000) {
     if (error || !data) return;
 
     setAlerts(
-      data.map((d) => ({
+      data.map((d: any) => ({
         id: d.id,
         severity: d.severity,
         title: d.title,
@@ -207,6 +206,7 @@ export function useAlerts(refreshInterval = 10000) {
         destIp: d.dest_ip,
         protocol: d.protocol,
         resolved: d.resolved,
+        resolution: d.resolution || null,
         createdAt: new Date(d.created_at).toLocaleTimeString("pt-BR", { hour12: false }),
       }))
     );
@@ -260,7 +260,6 @@ export function useReports() {
 
   useEffect(() => {
     fetchReports();
-    // Subscribe to changes on reports table
     const channel = supabase.channel("reports_changes")
       .on("postgres_changes", { event: "*", schema: "public", table: "reports" }, () => {
         fetchReports();

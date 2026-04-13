@@ -3,6 +3,14 @@ import { AlertTriangle, CheckCircle2, Clock, XCircle, Loader2, Trash2 } from "lu
 import { cn } from "@/lib/utils";
 import { useAlerts } from "@/hooks/use-realtime-data";
 import { supabase } from "@/integrations/supabase/client";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 
 const severityConfig: Record<string, { label: string; color: string; style: string }> = {
   critical: { label: "Crítico", color: "text-destructive", style: "bg-destructive/20 text-destructive font-semibold" },
@@ -15,12 +23,31 @@ export default function AlertsPage() {
   const { alerts, loading, refetch, clearAlerts } = useAlerts();
   const [selected, setSelected] = useState<string[]>([]);
   const [filter, setFilter] = useState<"all" | "pending" | "resolved">("pending");
+  const [resolveDialogOpen, setResolveDialogOpen] = useState(false);
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const [resolutionText, setResolutionText] = useState("");
+  const [resolving, setResolving] = useState(false);
 
-  const handleResolve = async (id: string) => {
-    const { error } = await supabase.from("network_alerts").update({ resolved: true }).eq("id", id);
+  const openResolveDialog = (id: string) => {
+    setResolvingId(id);
+    setResolutionText("");
+    setResolveDialogOpen(true);
+  };
+
+  const handleResolve = async () => {
+    if (!resolvingId) return;
+    setResolving(true);
+    const { error } = await supabase
+      .from("network_alerts")
+      .update({ resolved: true, resolution: resolutionText || null } as any)
+      .eq("id", resolvingId);
+    setResolving(false);
     if (error) {
       alert(`Erro ao resolver: ${error.message}`);
     } else {
+      setResolveDialogOpen(false);
+      setResolvingId(null);
+      setResolutionText("");
       refetch();
     }
   };
@@ -40,7 +67,7 @@ export default function AlertsPage() {
     if (!selected.length) return;
     const { error } = await supabase.from("network_alerts").delete().in("id", selected);
     if (error) {
-      alert(`Erro ao excluir: ${error.message}\n\nAcesse o Supabase e desative o RLS (Row Level Security) da tabela "network_alerts" para permitir exclusões pelo painel.`);
+      alert(`Erro ao excluir: ${error.message}`);
     } else {
       setSelected([]);
       refetch();
@@ -50,6 +77,8 @@ export default function AlertsPage() {
   const pendingCount = alerts.filter((a) => !a.resolved).length;
   const criticalCount = alerts.filter((a) => (a.severity === "critical" || a.severity === "high") && !a.resolved).length;
   const resolvedCount = alerts.filter((a) => a.resolved).length;
+
+  const filtered = alerts.filter(a => filter === "all" || (filter === "resolved" ? a.resolved : !a.resolved));
 
   if (loading) {
     return (
@@ -134,19 +163,16 @@ export default function AlertsPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {alerts.length > 0 && (
+          {filtered.length > 0 && (
             <div className="flex items-center justify-between rounded-lg border border-border bg-card p-3 shadow-sm">
               <label className="flex items-center gap-2 text-xs font-medium text-foreground cursor-pointer">
                 <input
                   type="checkbox"
                   className="rounded border-border"
-                  checked={selected.length > 0 && selected.length === alerts.filter(a => filter === "all" || (filter === "resolved" ? a.resolved : !a.resolved)).length}
+                  checked={selected.length > 0 && selected.length === filtered.length}
                   onChange={(e) => {
-                    if (e.target.checked) {
-                      setSelected(alerts.filter(a => filter === "all" || (filter === "resolved" ? a.resolved : !a.resolved)).map(a => a.id));
-                    } else {
-                      setSelected([]);
-                    }
+                    if (e.target.checked) setSelected(filtered.map(a => a.id));
+                    else setSelected([]);
                   }}
                 />
                 Selecionar Todos
@@ -169,9 +195,7 @@ export default function AlertsPage() {
               </div>
             </div>
           )}
-          {alerts
-            .filter(a => filter === "all" || (filter === "resolved" ? a.resolved : !a.resolved))
-            .map((alert) => {
+          {filtered.map((alert) => {
             const sConf = severityConfig[alert.severity] || severityConfig.medium;
             return (
               <div
@@ -216,10 +240,16 @@ export default function AlertsPage() {
                       {alert.destIp && <span>Destino: <span className="font-mono text-foreground">{alert.destIp}</span></span>}
                       {alert.protocol && <span>Protocolo: <span className="font-mono text-foreground">{alert.protocol}</span></span>}
                     </div>
+                    {alert.resolved && (alert as any).resolution && (
+                      <div className="mt-2 rounded bg-success/5 border border-success/20 p-2">
+                        <p className="text-[10px] font-medium text-success mb-0.5">Solução:</p>
+                        <p className="text-xs text-foreground">{(alert as any).resolution}</p>
+                      </div>
+                    )}
                     {!alert.resolved && (
                       <div className="mt-2">
                         <button
-                          onClick={() => handleResolve(alert.id)}
+                          onClick={() => openResolveDialog(alert.id)}
                           className="rounded-md bg-success/10 px-3 py-1 text-[10px] font-medium text-success hover:bg-success/20 transition-colors"
                         >
                           Marcar Resolvido
@@ -234,6 +264,39 @@ export default function AlertsPage() {
           })}
         </div>
       )}
+
+      {/* Resolve Dialog */}
+      <Dialog open={resolveDialogOpen} onOpenChange={setResolveDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Resolver Alerta</DialogTitle>
+            <DialogDescription>
+              Descreva a solução aplicada para este alerta. Alertas resolvidos não serão exibidos novamente.
+            </DialogDescription>
+          </DialogHeader>
+          <textarea
+            value={resolutionText}
+            onChange={(e) => setResolutionText(e.target.value)}
+            placeholder="Descreva a solução aplicada... Ex: Tráfego legítimo de VPN, adicionado à whitelist."
+            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring min-h-[100px] resize-none"
+          />
+          <DialogFooter>
+            <button
+              onClick={() => setResolveDialogOpen(false)}
+              className="rounded-md px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-accent transition-colors"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={handleResolve}
+              disabled={resolving}
+              className="rounded-md bg-success px-4 py-2 text-sm font-medium text-success-foreground hover:bg-success/90 disabled:opacity-50 transition-colors"
+            >
+              {resolving ? "Salvando..." : "Confirmar Resolução"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
