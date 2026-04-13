@@ -51,6 +51,7 @@ export type Database = {
           dest_ip: string | null
           id: string
           protocol: string | null
+          resolution: string | null
           resolved: boolean
           severity: string
           source_ip: string | null
@@ -62,6 +63,7 @@ export type Database = {
           dest_ip?: string | null
           id?: string
           protocol?: string | null
+          resolution?: string | null
           resolved?: boolean
           severity?: string
           source_ip?: string | null
@@ -73,6 +75,7 @@ export type Database = {
           dest_ip?: string | null
           id?: string
           protocol?: string | null
+          resolution?: string | null
           resolved?: boolean
           severity?: string
           source_ip?: string | null
