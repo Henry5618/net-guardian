@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { ScrollText, ShieldAlert, Bug, RefreshCw, LogIn, Filter, Loader2, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useAlerts } from "@/hooks/use-realtime-data";
-import { supabase } from "@/integrations/supabase/client";
+import { useAlerts, simActions } from "@/hooks/use-realtime-data";
 
 type LogCategory = "threat" | "error" | "update" | "login" | "all";
 
@@ -35,13 +34,9 @@ export default function LogsPage() {
 
   const handleBulkDelete = async () => {
     if (!selected.length) return;
-    const { error } = await supabase.from("network_alerts").delete().in("id", selected);
-    if (error) {
-      alert(`Erro ao excluir: ${error.message}\n\nAcesse o Supabase e desative o RLS (Row Level Security) da tabela "network_alerts".`);
-    } else {
-      setSelected([]);
-      refetch();
-    }
+    simActions.bulkDelete(selected);
+    setSelected([]);
+    refetch();
   };
 
   // Map real alerts into log entries

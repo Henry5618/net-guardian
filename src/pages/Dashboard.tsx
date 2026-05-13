@@ -75,7 +75,7 @@ const Dashboard = () => {
             <div className="mb-6">
               <h2 className="text-lg font-semibold text-foreground">Dashboard</h2>
               <p className="text-xs text-muted-foreground">
-                Monitoramento de rede em tempo real — Dados do agente local
+                Monitoramento de rede em tempo real — Modo simulação (1 modem, 1 roteador, 1 repetidor, 10 máquinas, 5 celulares, 2 impressoras)
               </p>
             </div>
 

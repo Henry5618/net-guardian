@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useSyncExternalStore } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { getSimulator } from "@/lib/simulation";
 
 export interface RealDevice {
   mac: string;
@@ -41,197 +42,107 @@ export interface IpChangeEvent {
   detectedAt: string;
 }
 
-// Fetch unique devices (latest entry per MAC)
-export function useDevices(refreshInterval = 10000) {
-  const [devices, setDevices] = useState<RealDevice[]>([]);
-  const [ipChanges, setIpChanges] = useState<IpChangeEvent[]>([]);
-  const [loading, setLoading] = useState(true);
+const fmtTime = (d: Date) => d.toLocaleTimeString("pt-BR", { hour12: false });
 
-  const fetchDevices = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("device_history")
-      .select("*")
-      .order("detected_at", { ascending: false })
-      .limit(500);
-
-    if (error || !data) return;
-
-    // Group by MAC, take latest entry
-    const byMac = new Map<string, typeof data[0]>();
-    for (const row of data) {
-      if (!byMac.has(row.mac)) byMac.set(row.mac, row);
-    }
-
-    const now = Date.now();
-    const deviceList: RealDevice[] = Array.from(byMac.values()).map((d) => {
-      const age = now - new Date(d.detected_at).getTime();
-      return {
-        mac: d.mac,
-        ip: d.ip,
-        hostname: d.hostname,
-        lastSeen: new Date(d.detected_at).toLocaleTimeString("pt-BR", { hour12: false }),
-        status: age < 120000 ? "online" : "offline",
-        eventType: d.event_type,
-      };
-    });
-
-    setDevices(deviceList);
-
-    // IP changes
-    const changes = data
-      .filter((d) => d.event_type === "ip_changed" && d.previous_ip)
-      .slice(0, 20)
-      .map((d) => ({
-        mac: d.mac,
-        hostname: d.hostname,
-        previousIp: d.previous_ip,
-        currentIp: d.ip,
-        detectedAt: new Date(d.detected_at).toLocaleTimeString("pt-BR", { hour12: false }),
-      }));
-    setIpChanges(changes);
-    setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    fetchDevices();
-    const interval = setInterval(fetchDevices, refreshInterval);
-    return () => clearInterval(interval);
-  }, [fetchDevices, refreshInterval]);
-
-  useEffect(() => {
-    const channel = supabase
-      .channel("device_history_changes")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "device_history" }, () => {
-        fetchDevices();
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [fetchDevices]);
-
-  return { devices, ipChanges, loading };
+function useSim() {
+  const sim = getSimulator();
+  const subscribe = useCallback((cb: () => void) => sim.subscribe(cb), [sim]);
+  const tick = useSyncExternalStore(subscribe, () => sim.devices.length + sim.traffic.length + sim.alerts.length);
+  return { sim, tick };
 }
 
-// Fetch traffic data, filtered by device IP (source OR dest)
-export function useTrafficData(deviceIp?: string | null, refreshInterval = 5000) {
-  const [traffic, setTraffic] = useState<RealTrafficPoint[]>([]);
-  const [loading, setLoading] = useState(true);
+export function useDevices(_refreshInterval = 10000) {
+  const { sim } = useSim();
+  // re-render on changes
+  useSyncExternalStore(
+    useCallback((cb) => sim.subscribe(cb), [sim]),
+    () => sim.devices.map((d) => d.lastSeen.getTime()).join(",")
+  );
 
-  const fetchTraffic = useCallback(async () => {
-    let query = supabase
-      .from("traffic_data")
-      .select("*")
-      .order("recorded_at", { ascending: false })
-      .limit(100);
+  const now = Date.now();
+  const devices: RealDevice[] = sim.devices.map((d) => ({
+    mac: d.mac,
+    ip: d.ip,
+    hostname: d.hostname,
+    lastSeen: fmtTime(d.lastSeen),
+    status: d.status === "offline" || now - d.lastSeen.getTime() > 180000 ? "offline" : "online",
+    eventType: d.eventType,
+  }));
 
-    if (deviceIp) {
-      query = query.or(`source_ip.eq.${deviceIp},dest_ip.eq.${deviceIp}`);
-    }
+  const ipChanges: IpChangeEvent[] = sim.ipChanges.map((c) => ({
+    mac: c.mac,
+    hostname: c.hostname,
+    previousIp: c.previousIp,
+    currentIp: c.currentIp,
+    detectedAt: fmtTime(c.detectedAt),
+  }));
 
-    const { data, error } = await query;
-    if (error || !data) return;
-
-    const points: RealTrafficPoint[] = data.reverse().map((d) => {
-      let timeStr = d.recorded_at;
-      if (!timeStr.endsWith("Z") && !timeStr.includes("+") && timeStr.includes("T")) {
-        timeStr += "Z";
-      }
-      return {
-        time: new Date(timeStr).toLocaleTimeString("pt-BR", {
-          hour12: false,
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-        }),
-        packets: d.packets,
-        bytes: d.bytes,
-        anomaly: d.anomaly,
-        sourceIp: d.source_ip,
-        destIp: d.dest_ip,
-        protocol: d.protocol,
-      };
-    });
-    setTraffic(points);
-    setLoading(false);
-  }, [deviceIp]);
-
-  useEffect(() => {
-    fetchTraffic();
-    const interval = setInterval(fetchTraffic, refreshInterval);
-    return () => clearInterval(interval);
-  }, [fetchTraffic, refreshInterval]);
-
-  useEffect(() => {
-    const channel = supabase
-      .channel(`traffic_data_changes_${deviceIp || "all"}`)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "traffic_data" }, () => {
-        fetchTraffic();
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [fetchTraffic, deviceIp]);
-
-  return { traffic, loading };
+  return { devices, ipChanges, loading: false };
 }
 
-// Fetch alerts
-export function useAlerts(refreshInterval = 10000) {
-  const [alerts, setAlerts] = useState<RealAlert[]>([]);
-  const [loading, setLoading] = useState(true);
+export function useTrafficData(deviceIp?: string | null, _refreshInterval = 5000) {
+  const { sim } = useSim();
+  useSyncExternalStore(
+    useCallback((cb) => sim.subscribe(cb), [sim]),
+    () => sim.traffic.length
+  );
 
-  const clearAlerts = async () => {
-    const { error } = await supabase.from("network_alerts").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    if (error) {
-      alert(`Não foi possível limpar os alertas: ${error.message}`);
-    } else {
-      await fetchAlerts();
-    }
+  const filtered = deviceIp
+    ? sim.traffic.filter((t) => t.sourceIp === deviceIp || t.destIp === deviceIp)
+    : sim.traffic;
+
+  const traffic: RealTrafficPoint[] = filtered.slice(-100).map((t) => ({
+    time: fmtTime(t.recordedAt),
+    packets: t.packets,
+    bytes: t.bytes,
+    anomaly: t.anomaly,
+    sourceIp: t.sourceIp,
+    destIp: t.destIp,
+    protocol: t.protocol,
+  }));
+
+  return { traffic, loading: false };
+}
+
+export function useAlerts(_refreshInterval = 10000) {
+  const { sim } = useSim();
+  useSyncExternalStore(
+    useCallback((cb) => sim.subscribe(cb), [sim]),
+    () => sim.alerts.map((a) => a.id + a.resolved).join(",")
+  );
+
+  const alerts: RealAlert[] = sim.alerts
+    .slice()
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+    .map((a) => ({
+      id: a.id,
+      severity: a.severity,
+      title: a.title,
+      description: a.description,
+      sourceIp: a.sourceIp,
+      destIp: a.destIp,
+      protocol: a.protocol,
+      resolved: a.resolved,
+      resolution: a.resolution,
+      createdAt: fmtTime(a.createdAt),
+    }));
+
+  return {
+    alerts,
+    loading: false,
+    refetch: () => {},
+    clearAlerts: async () => { sim.clearAlerts(); },
   };
-
-  const fetchAlerts = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("network_alerts")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(200);
-
-    if (error || !data) return;
-
-    setAlerts(
-      data.map((d: any) => ({
-        id: d.id,
-        severity: d.severity,
-        title: d.title,
-        description: d.description,
-        sourceIp: d.source_ip,
-        destIp: d.dest_ip,
-        protocol: d.protocol,
-        resolved: d.resolved,
-        resolution: d.resolution || null,
-        createdAt: new Date(d.created_at).toLocaleTimeString("pt-BR", { hour12: false }),
-      }))
-    );
-    setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    fetchAlerts();
-    const interval = setInterval(fetchAlerts, refreshInterval);
-    return () => clearInterval(interval);
-  }, [fetchAlerts, refreshInterval]);
-
-  useEffect(() => {
-    const channel = supabase
-      .channel("network_alerts_changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: "network_alerts" }, () => {
-        fetchAlerts();
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [fetchAlerts]);
-
-  return { alerts, loading, refetch: fetchAlerts, clearAlerts };
 }
 
+// Helpers exportados para páginas que precisam mutar (Alertas/Logs)
+export const simActions = {
+  resolveAlert: (id: string, resolution: string | null) => getSimulator().resolveAlert(id, resolution),
+  bulkResolve: (ids: string[]) => getSimulator().bulkResolve(ids),
+  bulkDelete: (ids: string[]) => getSimulator().bulkDelete(ids),
+};
+
+// ---------- Reports — continua persistindo no backend ----------
 export interface Report {
   id: string;
   title: string;
@@ -249,12 +160,8 @@ export function useReports() {
       .from("reports")
       .select("*")
       .order("created_at", { ascending: false });
-    
-    if (error) {
-      console.error("Error fetching reports:", error);
-    } else {
-      setReports(data || []);
-    }
+    if (error) console.error("Error fetching reports:", error);
+    else setReports(data || []);
     setLoading(false);
   }, []);
 
@@ -265,7 +172,6 @@ export function useReports() {
         fetchReports();
       })
       .subscribe();
-
     return () => { supabase.removeChannel(channel); };
   }, [fetchReports]);
 

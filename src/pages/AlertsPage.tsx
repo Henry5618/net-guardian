@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { AlertTriangle, CheckCircle2, Clock, XCircle, Loader2, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useAlerts } from "@/hooks/use-realtime-data";
-import { supabase } from "@/integrations/supabase/client";
+import { useAlerts, simActions } from "@/hooks/use-realtime-data";
 import {
   Dialog,
   DialogContent,
@@ -37,41 +36,26 @@ export default function AlertsPage() {
   const handleResolve = async () => {
     if (!resolvingId) return;
     setResolving(true);
-    const { error } = await supabase
-      .from("network_alerts")
-      .update({ resolved: true, resolution: resolutionText || null } as any)
-      .eq("id", resolvingId);
+    simActions.resolveAlert(resolvingId, resolutionText || null);
     setResolving(false);
-    if (error) {
-      alert(`Erro ao resolver: ${error.message}`);
-    } else {
-      setResolveDialogOpen(false);
-      setResolvingId(null);
-      setResolutionText("");
-      refetch();
-    }
+    setResolveDialogOpen(false);
+    setResolvingId(null);
+    setResolutionText("");
+    refetch();
   };
 
   const handleBulkResolve = async () => {
     if (!selected.length) return;
-    const { error } = await supabase.from("network_alerts").update({ resolved: true }).in("id", selected);
-    if (error) {
-      alert(`Erro ao resolver em massa: ${error.message}`);
-    } else {
-      setSelected([]);
-      refetch();
-    }
+    simActions.bulkResolve(selected);
+    setSelected([]);
+    refetch();
   };
 
   const handleBulkDelete = async () => {
     if (!selected.length) return;
-    const { error } = await supabase.from("network_alerts").delete().in("id", selected);
-    if (error) {
-      alert(`Erro ao excluir: ${error.message}`);
-    } else {
-      setSelected([]);
-      refetch();
-    }
+    simActions.bulkDelete(selected);
+    setSelected([]);
+    refetch();
   };
 
   const pendingCount = alerts.filter((a) => !a.resolved).length;
