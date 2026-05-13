@@ -31,13 +31,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const fetchProfile = async (userId: string) => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("profiles")
       .select("id, full_name, role")
       .eq("id", userId)
-      .single();
+      .maybeSingle();
     if (data) {
       setProfile(data as Profile);
+    } else {
+      // Fallback: usuário autenticado sem registro em profiles → assume viewer
+      if (error) console.warn("Profile fetch error, using viewer fallback:", error.message);
+      setProfile({ id: userId, full_name: "Usuário", role: "viewer" });
     }
   };
 
